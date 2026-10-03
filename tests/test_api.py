@@ -88,6 +88,44 @@ def test_invert_infeasible_409():
     assert resp.json()["code"] == "INFEASIBLE"
 
 
+def test_overlapping_exact_windows_parity_conflict_409():
+    """重复的精确窗合法受理，但其整数奇偶矛盾必须返回 409 INFEASIBLE。"""
+    full = {"start_segment": 1, "end_segment": 12,
+            "min_elongation": 375, "max_elongation": 375}
+    inside = {"start_segment": 5, "end_segment": 8,
+              "min_elongation": 120, "max_elongation": 120}
+    payload = {
+        "segment_lengths": [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2],
+        "strain_bounds": {"min": 0, "max": 30},
+        "windows": [dict(full) for _ in range(4)]
+        + [dict(inside) for _ in range(4)],
+    }
+    resp = client.post("/api/v1/invert", json=payload)
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "INFEASIBLE"
+
+
+def test_nearby_feasible_exact_windows_200():
+    """与矛盾仅差 1 的可行精确窗应正常求解，重复窗全部满足。"""
+    full = {"start_segment": 1, "end_segment": 12,
+            "min_elongation": 376, "max_elongation": 376}
+    inside = {"start_segment": 5, "end_segment": 8,
+              "min_elongation": 120, "max_elongation": 120}
+    payload = {
+        "segment_lengths": [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2],
+        "strain_bounds": {"min": 0, "max": 30},
+        "windows": [dict(full) for _ in range(4)]
+        + [dict(inside) for _ in range(4)],
+    }
+    resp = client.post("/api/v1/invert", json=payload)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["code"] == "OK"
+    result = body["result"]
+    assert len(result["window_checks"]) == 8
+    assert all(c["satisfied"] for c in result["window_checks"])
+
+
 def test_bad_json_400():
     resp = client.post(
         "/api/v1/invert",

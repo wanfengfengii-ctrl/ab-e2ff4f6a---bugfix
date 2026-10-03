@@ -143,6 +143,54 @@ def test_infeasible_conflicting_windows():
         invert_payload(payload)
 
 
+# --- 重叠精确窗的整数（奇偶）矛盾：必须在 3 秒截止前判不可行 ---
+CABLE_LENGTHS = [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2]
+
+
+def _cable_payload(outer: int, inner: int) -> dict:
+    full = {"start_segment": 1, "end_segment": 12,
+            "min_elongation": outer, "max_elongation": outer}
+    inside = {"start_segment": 5, "end_segment": 8,
+              "min_elongation": inner, "max_elongation": inner}
+    return {
+        "segment_lengths": CABLE_LENGTHS,
+        "strain_bounds": {"min": 0, "max": 30},
+        # 两组允许重复的精确窗，各 4 个。
+        "windows": [dict(full) for _ in range(4)]
+        + [dict(inside) for _ in range(4)],
+    }
+
+
+def test_overlapping_exact_windows_parity_contradiction_fast():
+    # 全长 375 要求第 7 段应变为奇；内部 120 要求其为偶。
+    payload = _cable_payload(375, 120)
+    start = time.monotonic()
+    with pytest.raises(InfeasibleError):
+        invert_payload(payload)
+    assert time.monotonic() - start < 3.0
+
+
+@pytest.mark.parametrize("outer,inner", [(376, 120), (375, 121)])
+def test_nearby_feasible_exact_windows_still_optimal(outer, inner):
+    # 与矛盾仅差 1 的可行精确窗不得被误拒，且三级最优与逐窗回算都成立。
+    payload = _cable_payload(outer, inner)
+    start = time.monotonic()
+    result = invert_payload(payload)
+    assert time.monotonic() - start < 3.0
+    strains = result["strains"]
+    assert len(strains) == 12
+    assert all(0 <= x <= 30 for x in strains)
+    # 8 个重复窗全部保留并各自满足。
+    assert len(result["window_checks"]) == 8
+    for check in result["window_checks"]:
+        assert check["satisfied"] is True
+        assert check["weighted_strain_sum"] == check["min_elongation"]
+    # 两个精确总量直接复核。
+    assert sum(CABLE_LENGTHS[i] * strains[i] for i in range(0, 12)) == outer
+    assert sum(CABLE_LENGTHS[i] * strains[i] for i in range(4, 8)) == inner
+
+
+
 def test_infeasible_due_to_strain_bounds():
     payload = {
         "segment_lengths": [1] * 6,
