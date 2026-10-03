@@ -88,6 +88,52 @@ def test_invert_infeasible_409():
     assert resp.json()["code"] == "INFEASIBLE"
 
 
+def test_overlapping_exact_windows_parity_409_fast():
+    """重叠精确窗的奇偶性联合矛盾：HTTP 入口在截止前返回 409 INFEASIBLE。"""
+    payload = {
+        "segment_lengths": [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2],
+        "strain_bounds": {"min": 0, "max": 30},
+        "windows": [
+            {"start_segment": 1, "end_segment": 12,
+             "min_elongation": 375, "max_elongation": 375}
+            for _ in range(4)
+        ] + [
+            {"start_segment": 5, "end_segment": 8,
+             "min_elongation": 120, "max_elongation": 120}
+            for _ in range(4)
+        ],
+    }
+    resp = client.post("/api/v1/invert", json=payload)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "INFEASIBLE"
+
+
+def test_overlapping_exact_windows_nearby_200():
+    """奇偶性相容的相邻精确窗必须可行（合法解不得被模推理误拒）。"""
+    payload = {
+        "segment_lengths": [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2],
+        "strain_bounds": {"min": 0, "max": 30},
+        "windows": [
+            {"start_segment": 1, "end_segment": 12,
+             "min_elongation": 374, "max_elongation": 374}
+            for _ in range(4)
+        ] + [
+            {"start_segment": 5, "end_segment": 8,
+             "min_elongation": 120, "max_elongation": 120}
+            for _ in range(4)
+        ],
+    }
+    resp = client.post("/api/v1/invert", json=payload)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["code"] == "OK"
+    lengths = payload["segment_lengths"]
+    xs = body["result"]["strains"]
+    assert sum(lengths[i] * xs[i] for i in range(12)) == 374
+    assert sum(lengths[i] * xs[i] for i in range(4, 8)) == 120
+    assert all(c["satisfied"] for c in body["result"]["window_checks"])
+
+
 def test_bad_json_400():
     resp = client.post(
         "/api/v1/invert",

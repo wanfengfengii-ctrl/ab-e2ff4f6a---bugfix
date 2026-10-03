@@ -98,6 +98,55 @@ def test_infeasible_randomized_n6(seed):
         invert_payload(make_payload(lengths, strain_min, strain_max, windows_raw))
 
 
+@pytest.mark.parametrize("seed", range(6))
+def test_gcd_heavy_exact_windows_match_bruteforce(seed):
+    """权重高度成比例（多个 2 + 偶发奇数）的精确窗：直接压模/CRT 传播。
+
+    用全枚举同时核验可行性（绝不误拒）与三级最优解（绝不改变既有裁决）。
+    """
+    rng = random.Random(400 + seed)
+    n = 6
+    # 权重多数为 2、少数为 1/3：天然产生奇偶类同余，类似 12 段故障实例。
+    lengths = [rng.choice((2, 2, 2, 1, 3)) for _ in range(n)]
+    strain_min, strain_max = 0, 3
+    truth = [rng.randint(strain_min, strain_max) for _ in range(n)]
+    pairs = [(s, e) for s in range(n) for e in range(s, n)]
+    rng.shuffle(pairs)
+    windows_raw = []
+    for s, e in pairs[:10]:
+        total = sum(lengths[i] * truth[i] for i in range(s, e + 1))
+        windows_raw.append((s, e, total, total))  # 全部精确等式
+    result = invert_payload(make_payload(lengths, strain_min, strain_max, windows_raw))
+    expected = brute_force_optimal(lengths, strain_min, strain_max, windows_raw)
+    assert expected is not None
+    assert result["strains"] == expected[1]
+    assert result["objectives"]["max_adjacent_diff"] == expected[0][0]
+    assert result["objectives"]["sum_adjacent_abs_diff"] == expected[0][1]
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_gcd_heavy_infeasible_fast(seed):
+    """随机制造「权重全偶项 + 奇数右端」等模矛盾：必须快速判不可行。"""
+    rng = random.Random(500 + seed)
+    n = 6
+    lengths = [2] * n  # 所有权重为偶数
+    # 全长精确窗给奇数 ⇒ 2·Σx = 奇数，不可能；其余窗随机。
+    truth = [rng.randint(0, 3) for _ in range(n)]
+    windows_raw = []
+    pairs = [(s, e) for s in range(n) for e in range(s, n)]
+    rng.shuffle(pairs)
+    for s, e in pairs[:9]:
+        total = 2 * sum(truth[i] for i in range(s, e + 1))
+        windows_raw.append((s, e, total, total))
+    full = 2 * sum(truth)
+    windows_raw.append((0, n - 1, full + 1, full + 1))  # 奇数右端，必矛盾
+    assert brute_force_optimal(lengths, 0, 3, windows_raw) is None
+    start = time.time()
+    with pytest.raises(InfeasibleError):
+        invert_payload(make_payload(lengths, 0, 3, windows_raw))
+    assert time.time() - start < 3.0
+
+
 def test_infeasible_max_size_is_fast():
     rng = random.Random(99)
     n = 12

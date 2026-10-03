@@ -124,6 +124,67 @@ def test_random_small_instances_match_bruteforce(seed):
     )
 
 
+def test_overlapping_exact_windows_parity_contradiction_fast():
+    """重叠精确窗的奇偶性矛盾：全缆要求第 7 段奇、内窗要求其偶。
+
+    纯界传播看不见模矛盾，会逐值枚举直至超时；gcd/同余（CRT）传播应在
+    毫秒级裁决为 INFEASIBLE，且重复窗作为合法输入照常受理。
+    """
+    payload = {
+        "segment_lengths": [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2],
+        "strain_bounds": {"min": 0, "max": 30},
+        "windows": [
+            {"start_segment": 1, "end_segment": 12,
+             "min_elongation": 375, "max_elongation": 375}
+            for _ in range(4)
+        ] + [
+            {"start_segment": 5, "end_segment": 8,
+             "min_elongation": 120, "max_elongation": 120}
+            for _ in range(4)
+        ],
+    }
+    start = time.monotonic()
+    with pytest.raises(InfeasibleError):
+        invert_payload(payload)
+    assert time.monotonic() - start < 3.0
+
+
+def test_overlapping_exact_windows_nearby_feasible_fast():
+    """与矛盾实例仅差一个伸长量、奇偶性相容的精确窗必须照常返回可行最优解。
+
+    374（全缆偶）与 376（全缆奇）分别兼容内窗 120 对 x_7 的偶/奇要求；
+    不得因模推理误拒，且须在产品截止前完成。
+    """
+    base = {
+        "segment_lengths": [2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2],
+        "strain_bounds": {"min": 0, "max": 30},
+    }
+
+    def windows(total):
+        return [
+            {"start_segment": 1, "end_segment": 12,
+             "min_elongation": total, "max_elongation": total}
+            for _ in range(4)
+        ] + [
+            {"start_segment": 5, "end_segment": 8,
+             "min_elongation": 120, "max_elongation": 120}
+            for _ in range(4)
+        ]
+
+    for total in (374, 376, 370, 380):
+        payload = {**base, "windows": windows(total)}
+        start = time.monotonic()
+        result = invert_payload(payload)
+        assert time.monotonic() - start < 3.0
+        xs = result["strains"]
+        assert len(xs) == 12
+        assert all(0 <= v <= 30 for v in xs)
+        assert sum(base["segment_lengths"][i] * xs[i] for i in range(12)) == total
+        assert sum(base["segment_lengths"][i] * xs[i] for i in range(4, 8)) == 120
+        assert all(c["satisfied"] for c in result["window_checks"])
+        assert len(result["window_checks"]) == 8
+
+
 def test_infeasible_conflicting_windows():
     payload = {
         "segment_lengths": [1] * 6,
