@@ -1,0 +1,52 @@
+services:
+  api:
+    build: .
+    image: cable-inversion-api:latest
+    ports:
+      # 宿主机端口可通过环境变量 HOST_PORT 配置，默认 8000
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >
+          import json,os,sys,urllib.request;
+          url='http://127.0.0.1:%s/health' % os.environ.get('APP_PORT','8000');
+          info=json.load(urllib.request.urlopen(url, timeout=4));
+          sys.exit(0 if info.get('status')=='ok' else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # 一次性验证服务：等待 api 健康后执行单元测试、构建检查与 API 冒烟，
+  # 完成后自行退出，退出码即结论（0 全部通过）。
+  verify:
+    build: .
+    image: cable-inversion-api:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_BASE_URL: http://api:8000
+      PYTHONDONTWRITEBYTECODE: "1"
+    restart: "no"
+    # verify 是一次性任务，不监听端口；禁用从镜像继承的 HTTP 健康检查。
+    healthcheck:
+      disable: true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        echo '== unit tests ==' &&
+        python -m pytest -q -p no:cacheprovider tests &&
+        echo '== build check (compileall) ==' &&
+        python -m compileall -q app tests scripts &&
+        echo '== pip check ==' &&
+        pip check &&
+        echo '== api smoke ==' &&
+        python scripts/smoke.py
